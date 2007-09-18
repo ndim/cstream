@@ -1,18 +1,23 @@
+2.7.4:
+------
+
+Print the message that we switch to normal from O_DIRECT only when
+verbose > 0.
+
 2.7.3:
 ------
 
-Fix compilation under FreeBSD-4.x
-
+More c flags changes for more portability.
 
 2.7.2:
 ------
 
-Fix compilation under Redhat-7.3
+Fix compilation under Redhat-7.3.
 
 2.7.1:
 ------
 
-Support for $CSTREAM_AUDIO_BITRATE
+Support for $CSTREAM_AUDIO_BITRATE.
 
 2.7.0:
 ------

@@ -918,10 +918,11 @@ int my_write(const struct options *const o, struct progstate *const state
 
   /* If we were doing O_DIRECT, retry after reopening */
   if (state->using_o_direct) {
-    fprintf(stderr, "Write of %llu bytes failed at %p (%lld)"
-	    ", reopening without O_DIRECT\n"
-	    , (unsigned long long)n_bytes
-	    , buf, (long long)(long)buf % pagesize);
+    if (o->v > 0)
+      fprintf(stderr, "Write of %llu bytes failed at %p (%lld) (normal)"
+	      ", reopening without O_DIRECT\n"
+	      , (unsigned long long)n_bytes
+	      , buf, (long long)(long)buf % pagesize);
     if (close(state->ofd) == -1) {
       perror("Cannot close output file\n");
       exit(2);
