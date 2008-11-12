@@ -1,3 +1,9 @@
+2.7.5:
+------
+
+NetBSD and general pkgsrc compatibility.  Should get rid of the only
+patch used in pkgsrc.
+
 2.7.4:
 ------
 

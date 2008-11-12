@@ -131,6 +131,11 @@
 #define NORESOLV
 #endif
 
+/* Solaris needs this */
+#ifndef	INADDR_NONE
+#define	INADDR_NONE	0xffffffff
+#endif
+
 #ifndef NORESOLV
 #include <netdb.h>
 #endif
@@ -175,12 +180,10 @@ struct options {
   char *O;
   char *p;
   int l;
-  int B;
   int c;
   int w;
   int S;
   int T;
-  int user_specified_blocksize;
 };
 
 void malloc_page_aligned(const struct options *o, struct pmalloc * pmalloc);
@@ -204,24 +207,28 @@ struct progstate {
   int teefd; /* Usually -1, but can be a file descriptor number to copy
 	      * the stream to.  Currently that will always be 1 (stdout) */
   int using_o_direct;
+  int using_o_direct_i; /* Input */
   struct pmalloc pmalloc; /* Size is b (blocksize) */
 };
 
 #ifndef NOTIMER 
-static void sigtimer(const int signal)
+static void
+sigtimer(const int signal)
 {
   signal_report = 1;
 }
 #endif
 
-static void sigshutdown(const int signal)
+static void
+sigshutdown(const int signal)
 {
   stopit = 1;
 }
 
 #if 0
 /* Disable that for now */
-static void sigchld(const int sig)
+static void
+sigchld(const int sig)
 {
   int status;
   int ret;
@@ -259,19 +266,22 @@ static void sigchld(const int sig)
 }
 #endif
 
-static void sigreport(int signal)
+static void
+sigreport(int signal)
 {
   signal_report = 1;
 }
 
-static void sighup(int signal)
+static void
+sighup(int signal)
 {
   write(2, "SIGHUP\n", sizeof("SIGHUP\n")-1);
   n_sighups++;
 }
 
 #ifdef SIGHUP
-static void handle_sighup(void)
+static void
+handle_sighup(void)
 {
   fprintf(stderr,
 	  "Received SIGHUP. "
@@ -289,14 +299,16 @@ static void handle_sighup(void)
 }
 #endif
 
-static struct options *default_options(struct options *const o)
+static struct options *
+default_options(struct options *const o)
 {
   bzero(o, sizeof(struct options));
   return o;
 }
 
 #ifdef HAVE_STRUCT_SIGACTION
-static void tsignal(const int sig, void (*const handler)(int))
+static void
+tsignal(const int sig, void (*const handler)(int))
 {
   struct sigaction sa;
 
@@ -309,7 +321,8 @@ static void tsignal(const int sig, void (*const handler)(int))
   }
 }
 #else
-static void tsignal(const int sig, void (*const handler)(int))
+static void
+tsignal(const int sig, void (*const handler)(int))
 {
   if (signal(sig, handler) == SIG_ERR) {
     perror("signal");
@@ -320,7 +333,8 @@ static void tsignal(const int sig, void (*const handler)(int))
 
 #ifdef WANT_SOUND
 
-static void setaudio(int fd, const char *spec)
+static void
+setaudio(int fd, const char *spec)
 {
   struct soundoptions {
     int so_format;
@@ -356,7 +370,8 @@ static void setaudio(int fd, const char *spec)
 	    , spec, strerror(errno));
 }
 #else /* WANT_SOUND */
-static void setaudio(int fd, const char *const spec)
+static void
+setaudio(int fd, const char *const spec)
 {
   fprintf(stderr, "Sorry, don't have soundcard support compiled in, "
 	  "no audio settings will be made.\nTrying to play anyway.\n");
@@ -364,7 +379,8 @@ static void setaudio(int fd, const char *const spec)
 #endif /* WANT_SOUND */
 
 #ifdef NOTCP
-static int open_tcp(const struct options *const o, int mode)
+static int
+open_tcp(const struct options *const o, int mode)
 {
   fprintf(stderr, "Sorry, TCP/IP socket support has not been compiled in.\n");
   exit(1);
@@ -372,7 +388,8 @@ static int open_tcp(const struct options *const o, int mode)
 
 #else /* NOTCP */
 
-static void print_inet(FILE *const f, const void *const raw)
+static void
+print_inet(FILE *const f, const void *const raw)
 {
   const unsigned char *c = raw;
 
@@ -380,8 +397,8 @@ static void print_inet(FILE *const f, const void *const raw)
 	  , (int)*(c + 2), (int)*(c + 3));
 }
 
-
-static int open_tcp(const struct options *const o, int mode)
+static int
+open_tcp(const struct options *const o, int mode)
 {
   char *hostname;
   const char *port;
@@ -546,9 +563,30 @@ static int open_tcp(const struct options *const o, int mode)
 }
 #endif /* else NOTCP */
 
-void open_output_file(const struct options *const o
-		      , struct progstate *const state, int flags)
+int
+get_fs_blocksize(const char *const filename, int flags, int mode)
 {
+      struct statvfs statfs;
+      int fd;
+
+      fd = open(filename, flags, mode);
+      if (fd == -1) {
+	perror("Cannot open input file (to get block size)");
+	exit(2);
+      }
+      if (fstatvfs(fd, &statfs) == -1) {
+	perror("Cannot get FS blocksize, you need to use -b<blocksize>\n");
+	exit(2);
+      }
+      close(fd);
+      return statfs.f_bsize;
+}
+
+void
+open_output_file(const struct options *const o
+		 , struct progstate *const state, int flags)
+{
+  int tmp_blocksize;
   int mode = 0666;
 
   if (strchr(o->O, 'S')) {
@@ -565,35 +603,30 @@ void open_output_file(const struct options *const o
 
   if (state->using_o_direct) {
     flags |= O_DIRECT;
+#ifndef HAVE_SYS_STATVFS_H
+    if (!o->b) {
+      fprintf(stderr, "This platform does not have statvfs, you need to "
+	      "specify the blocksize manually with -b, it must match the "
+	      "filesystem blocksize\n");
+      exit(2);
+    }
+#else
+    tmp_blocksize = get_fs_blocksize(o->o, flags, mode);
+    if (state->b && state->b != tmp_blocksize) {
+      fprintf(stderr, "WARNING: blocksize set to %d, but output filesystem \n"
+	      "requires %d.  Continuing anyway with %d.\n"
+	      , state->b
+	      , tmp_blocksize
+	      , state->b);
+    } else {
+      state->b = tmp_blocksize;
+    }
+#endif
     if (o->v > 1) {
       fprintf(stderr, "Using O_DIRECT on output file with blocksize %d\n"
 	      , state->b);
     }
-
-    if (!o->user_specified_blocksize) {
-#ifdef HAVE_SYS_STATVFS_H
-      struct statvfs statfs;
-
-      state->ofd = open(o->o, flags, mode);
-      if (state->ofd == -1) {
-	perror("Cannot open output file (to get block size)");
-	exit(2);
-      }
-      if (fstatvfs(state->ofd, &statfs) == -1) {
-	perror("Cannot get FS blocksize, you need to use -b<blocksize>\n");
-	exit(2);
-      }
-      state->b = statfs.f_bsize;
-      close(state->ofd);
-#else
-      fprintf(stderr, "This platform does not have statvfs, you need to "
-	      "specify the blocksize manually with -b, it must match the "
-	      "filesystemblocksize\n");
-      exit(2);
-#endif
-    }
   }
-
   state->ofd = open(o->o, flags, mode);
   if (state->ofd == -1) {
     perror("Cannot open output file");
@@ -601,8 +634,49 @@ void open_output_file(const struct options *const o
   }
 }
 
-static void init(struct options *const o, struct progstate *const state
-		 , const int blocksize)
+void
+open_input_file(const struct options *const o
+		, struct progstate *const state, int flags)
+{
+  int tmp_blocksize;
+
+  if (state->using_o_direct_i) {
+    flags |= O_DIRECT;
+#ifndef HAVE_SYS_STATVFS_H
+    if (!o->b) {
+      fprintf(stderr, "This platform does not have statvfs, you need to "
+	      "specify the blocksize manually with -b, it must match the "
+	      "filesystem blocksize\n");
+      exit(2);
+    }
+#else
+    tmp_blocksize = get_fs_blocksize(o->i, flags, 0);
+    if (state->b && state->b != tmp_blocksize) {
+      fprintf(stderr, "WARNING: blocksize set to %d, but input filesystem \n"
+	      "requires %d.  Continuing anyway with %d.\n"
+	      , state->b
+	      , tmp_blocksize
+	      , state->b);
+    } else {
+      state->b = tmp_blocksize;
+    }
+#endif
+    if (o->v > 1) {
+      fprintf(stderr, "Using O_DIRECT on input file with blocksize %d\n"
+	      , state->b);
+    }
+  }
+
+  state->ifd = open(o->i, flags);
+  if (state->ifd == -1) {
+    perror("Cannot open input file");
+    exit(2);
+  }
+}
+
+static void
+init(struct options *const o, struct progstate *const state
+     , const int user_specified_blocksize)
 {
   struct timeval t;
 
@@ -618,28 +692,15 @@ static void init(struct options *const o, struct progstate *const state
   if (strchr(o->O, 'D'))
     state->using_o_direct = 1;
 
-  if (blocksize == 0) {
-    state->b = 8192;
-  } else {
-    state->b = blocksize;
-    o->user_specified_blocksize = 1;
-  }
+  if (strchr(o->I, 'D'))
+    state->using_o_direct_i = 1;
 
-  if (state->b == 0)
-    state->b = state->b;
-
-  if (o->w == 0)
-    o->w = state->b;
-
-  if (state->b < state->b) {
-    fprintf(stderr, "-B must not be lower than -b or -n (%d/%d)\n"
-	    , state->b, state->b);
-    exit(1);
-  }
-
-  if (o->c < 0 || o->c > 4) {
-    fprintf(stderr, "-c must must be 0, 1, 2, 3 or 4\n");
-    exit(1);
+  /* 
+   * This needs to be set here since the file opening can come up with
+   * constraints that we need to warn the user about.
+   */
+  if (user_specified_blocksize) {
+    state->b = user_specified_blocksize;
   }
 
   if (o->i == NULL || o->i[0] == '\0')
@@ -654,12 +715,11 @@ static void init(struct options *const o, struct progstate *const state
 	exit(2);
       }
       state->ifd = open(o->i, O_RDWR);
-    }
-    else {
+    } else {
       if (strchr(o->i, ':') && !strchr(o->I, 'N'))
 	state->ifd = open_tcp(o, O_RDONLY);
       else
-	state->ifd = open(o->i, O_RDONLY);
+	open_input_file(o, state, O_RDONLY);
     }
     if (state->ifd == -1) {
       perror("Cannot open input file");
@@ -696,6 +756,17 @@ static void init(struct options *const o, struct progstate *const state
     else {
       open_output_file(o, state, O_RDWR | O_CREAT | O_TRUNC); /* sets ofd */
     }
+  }
+
+  if (state->b == 0)
+    state->b = 8192;
+
+  if (o->w == 0)
+    o->w = state->b;
+
+  if (o->c < 0 || o->c > 4) {
+    fprintf(stderr, "-c must must be 0, 1, 2, 3 or 4\n");
+    exit(1);
   }
 
   if (o->v >= 4)
@@ -774,7 +845,8 @@ static void init(struct options *const o, struct progstate *const state
   malloc_page_aligned(o, &state->pmalloc);
 }
 
-static void closefiles(struct progstate *const state)
+static void
+closefiles(struct progstate *const state)
 {
   if (state->ofd != 1 && state->ofd != 2 && state->ofd != -1)
     if (close(state->ofd) == -1) {
@@ -787,9 +859,10 @@ static void closefiles(struct progstate *const state)
 }
 
 /* Will return true if something has been written */
-static void print_kmg(const char *const pre
-		      , const char *const format, const double num
-		      , const char *const post, FILE *const f)
+static void
+print_kmg(const char *const pre
+	  , const char *const format, const double num
+	  , const char *const post, FILE *const f)
 {
   if (pre != NULL)
     fprintf(f, "%s", pre);
@@ -810,9 +883,10 @@ static void print_kmg(const char *const pre
     fprintf(f, "%s", post);
 }
 
-static void report(const struct options *const o,
-		   struct progstate *const state,
-		   int curbytes)
+static void
+report(const struct options *const o,
+       struct progstate *const state,
+       int curbytes)
 {
   struct timeval t2;
   double sofar;
@@ -846,7 +920,7 @@ static void report(const struct options *const o,
   print_kmg(" ", "%.2f", rate, "B/s", stderr);
   if (o->l)
       fprintf(stderr, " %g lines", (double)state->n_lines);
-  if (curbytes != -1 && state->b != state->b)
+  if (curbytes != -1 && state->b != state->b) // FIXME
     fprintf(stderr, " %.1f %%buf", (double)curbytes / (double)state->b * 100.0);
   fprintf(stderr, "\n");
 
@@ -886,8 +960,10 @@ static void report(const struct options *const o,
   }
 }
 
-int my_write(const struct options *const o, struct progstate *const state
-	     , const void *buf, const size_t n_bytes) {
+int
+my_write(const struct options *const o, struct progstate *const state
+	 , const void *buf, const size_t n_bytes)
+{
   int ret;
   static int warning_printed = 0;
 
@@ -943,8 +1019,9 @@ int my_write(const struct options *const o, struct progstate *const state
   exit(2);
 }
 
-void malloc_page_aligned(const struct options *const o
-			 , struct pmalloc *const pmalloc)
+void
+malloc_page_aligned(const struct options *const o
+		    , struct pmalloc *const pmalloc)
 {
   pmalloc->allocated = malloc(pmalloc->n_bytes + pagesize);
 
@@ -964,8 +1041,9 @@ void malloc_page_aligned(const struct options *const o
 }
 
 #if HAVE_POLL_H
-static void pollloop(const struct options *const o
-		     , struct progstate *const state)
+static void
+pollloop(const struct options *const o
+	 , struct progstate *const state)
 {
   char *buf; /* Always points to base of allocation */
   char *curread, *curwrite; /* Iterators */
@@ -997,6 +1075,7 @@ static void pollloop(const struct options *const o
     /* Space in buffer for another read */
     if (curread - buf /* Bytes in Buffer */
 	<=
+	// FIXME
 	state->b - state->b /* Max bytes in buffer for another read() */
 	) {
       want_to_read = 1;
@@ -1092,7 +1171,8 @@ static void pollloop(const struct options *const o
 }
 #endif /* HAVE_POLL_H */
 
-static void loop(struct options *const o, struct progstate *const state)
+static void
+loop(struct options *const o, struct progstate *const state)
 {
   char *buf; /* Holds the whole buffer state->b*/
   char *curbuf; /* Iterates over buf when reading and leave after last
@@ -1138,11 +1218,11 @@ static void loop(struct options *const o, struct progstate *const state)
 
   if (o->c == 1) { /* Reader will buffer */
     if (childpid == 0) { /* Then writer will just use block size */
-      state->b = state->b;
+      state->b = state->b; // FIXME
     }
   } else if (o->c == 2) {
     if (childpid != 0) { /* Otherwise reader will just use block size */
-      state->b = state->b;
+      state->b = state->b; // FIXME
     }
   }
 
@@ -1186,6 +1266,7 @@ static void loop(struct options *const o, struct progstate *const state)
 	  exit(1);
 	}
 
+	// FIXME
 	state->b = state->b = frames * 2 * 2; /* 16 bit Stereo */
 	for (i = 0; i < frames; i++) {
 	  val = sin((double)i * 2.0 * pi / (double)frames) * 32767.0;
@@ -1424,19 +1505,22 @@ static void loop(struct options *const o, struct progstate *const state)
   free(palloc.allocated);
 }
 
-void cleanup(const struct options *const o, struct progstate *const state)
+void
+cleanup(const struct options *const o, struct progstate *const state)
 {
   if (o->p && state->pidfile_has_been_created)
     if (unlink(o->p) == -1)
       perror("Unlink pidfile failed - continuing");
 }
 
-static void print_version(void)
+static void
+print_version(void)
 {
   printf("%s\n", VERSION);
 }
 
-static void usage(void)
+static void
+usage(void)
 {
   fprintf(stderr, "cstream by Martin Cracauer - version " VERSION "\n");
   fprintf(stderr,
@@ -1449,7 +1533,6 @@ static void usage(void)
 	  "(unimplemented)\n"
 	  "         3 = verbose stats on every read/write\n"
 	  "-b <n> = blocksize [default: 8192]\n"
-	  "-B <n> = buffer (at most) <n> bytes [default: one block]\n"
 	  "-c <n> = Concurrency, writing done by a seperate process\n"
 	  "         0 = no concurrency, one one process\n"
 	  "         1 = read side buffers\n"
@@ -1487,7 +1570,8 @@ static void usage(void)
   exit(1);
 }
 
-long long atoi_kmg(const char *const s)
+long long
+atoi_kmg(const char *const s)
 {
   long long res;
   char c;
@@ -1504,7 +1588,8 @@ long long atoi_kmg(const char *const s)
   return res;
 }
 
-int main(int argc, char *const argv[])
+int
+main(int argc, char *const argv[])
 {
   struct options o;
   struct progstate state;
@@ -1513,11 +1598,10 @@ int main(int argc, char *const argv[])
 
   default_options(&o);
 
-  while ((ch = getopt(argc, argv, "b:B:c:i:I:n:o:O:p:St:T:v:Vl")) != -1) {
+  while ((ch = getopt(argc, argv, "b:c:i:I:n:o:O:p:St:T:v:Vl")) != -1) {
     switch(ch) {
     case 'v': o.v = atoi(optarg); break;
     case 'b': blocksize = atoi_kmg(optarg); break;
-    case 'B': o.B = atoi_kmg(optarg); break;
     case 'c': o.c = atoi(optarg); break;
     case 'l': o.l = 1; break;
     case 'n': o.n = atoi_kmg(optarg); break;
