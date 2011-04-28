@@ -3,7 +3,7 @@ dnl Process this file with autoconf to produce a configure script.
 AC_INIT(cstream.c)
 AC_CONFIG_AUX_DIR(auxdir)
 
-AM_INIT_AUTOMAKE(cstream, 2.7.5)
+AM_INIT_AUTOMAKE(cstream, 2.8.0)
 
 dnl Checks for programs.
 AC_PROG_AWK
@@ -41,6 +41,15 @@ AC_TRY_COMPILE([#include <sys/types.h>]
 [#include <sys/time.h>], struct itimerval itv,
   cat >> confdefs.h <<\EOF
 #define HAVE_STRUCT_ITIMERVAL 1
+EOF
+)
+
+AC_TRY_COMPILE(#define _GNU_SOURCE
+[#include <sys/types.h>]
+[#include <sys/stat.h>]
+[#include <fcntl.h>], open("/tmp/l", O_DIRECT,  O_RDONLY),
+  cat >> confdefs.h <<\EOF
+#define HAVE_O_DIRECT 1
 EOF
 )
 

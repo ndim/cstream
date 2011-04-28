@@ -1,3 +1,24 @@
+
+ATTENTION:
+I'm afraid that support for the '-B <size_of_buffer>' was clobbered in
+2.7.4 or whereabouts.  This one allowed you do have a reader do
+multiple reads before the writer could write or vice versa.
+
+Change reverted in 2.7.6.
+
+2.7.4 and 2.75 do not have working -B.
+
+2.8.0:
+------
+
+Support platforms that do not have open(2) with O_DIRECT.
+Such as MacOS X.
+
+2.7.6:
+------
+
+Revert 2.7.3 which broke -B
+
 2.7.5:
 ------
 
@@ -9,6 +30,10 @@ patch used in pkgsrc.
 
 Print the message that we switch to normal from O_DIRECT only when
 verbose > 0.
+
+SEE ABOVE, broke -B.
+
+CHANGE reverted
 
 2.7.3:
 ------
