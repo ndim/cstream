@@ -1,3 +1,18 @@
+3.0.0:
+------
+
+IPV6 support for IPV6 day 2011.
+
+The IPV6 support shouldn't break anything after hostname lookup
+succeeds.  Issues might be building on older platforms if I screwed up
+the autoconf mechanism to not compile it in.
+
+Having said that, assorted little code cleanups are in this release,
+too.  They shouldn't break anything but non-IPV6 things were touched.
+
+
+Aftermath for 2.7.4 - 2.7.6:
+--------------------
 
 ATTENTION:
 I'm afraid that support for the '-B <size_of_buffer>' was clobbered in

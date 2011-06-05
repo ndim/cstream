@@ -1,3 +1,12 @@
+hostname lookup for ipv4 doesn't do the right thing. // FIXME
+==> do the loop thing for getaddrinfo
+
+specifying a ipv4 address gets me no socket at all now // FIXED
+
+specifying a ipv6 address doesn't work? // FIXED
+
+%%
+
 TCP mode:
 - :port			bind to local port and await connection
 - hostname:port		connect to remote machine/port

@@ -10,7 +10,6 @@
 #endif
 
 #define WITH_RESOLV
-#undef DO_BIND
 
 /*
  * Control glibc, especially to get 64 bit file offsets
@@ -140,7 +139,7 @@
 #include <netdb.h>
 #endif
 
-#if !defined(HAVE_SOCKLEN_T) && !defined(CRAENV) && !defined(NORESOLV)
+#if !defined(HAVE_SOCKLEN_T) && !defined(NORESOLV)
 typedef u_int32_t socklen_t;
 #endif
 
@@ -186,6 +185,7 @@ struct options {
   int S;
   int T;
   int user_specified_blocksize;
+  int six;
 };
 
 void malloc_page_aligned(const struct options *o, struct pmalloc * pmalloc);
@@ -277,7 +277,7 @@ sigreport(int signal)
 static void
 sighup(int signal)
 {
-  write(2, "SIGHUP\n", sizeof("SIGHUP\n")-1);
+  int meh = write(2, "SIGHUP\n", sizeof("SIGHUP\n") - 1);
   n_sighups++;
 }
 
@@ -399,24 +399,18 @@ print_inet(FILE *const f, const void *const raw)
 	  , (int)*(c + 2), (int)*(c + 3));
 }
 
-static int
-open_tcp(const struct options *const o, int mode)
-{
-  char *hostname;
-  const char *port;
-  int fd = -1;
-  struct hostent *hostent;
-  const char *spec;
-  int newfd;
-  struct sockaddr_in serv_addr;
-  int *size;
+// this construct's purpose is to always compile the old API
+#ifdef HAVE_GETADDRINFO
+static int use_getaddrlen = 1;
+#else
+static int use_getaddrlen = 0;
+#endif
 
-  if (mode == O_WRONLY) {
-    spec = o->o;
-  } else {
-    spec = o->i;
-  }
-  if ((fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+int gimme_a_socket(int domain, int type, int protocol)
+{
+  int fd;
+
+  if ((fd = socket(domain, type, protocol)) == -1) {
     perror("socket");
     exit(2);
   }
@@ -427,35 +421,75 @@ open_tcp(const struct options *const o, int mode)
       perror("setsockopt(REUSEADDR), [continuing]");
     }
   }
+  return fd;
+}
 
-#ifdef DO_BIND
-  bzero(&serv_addr, sizeof(serv_addr));
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = inet_addr("192.168.175.73");
-  serv_addr.sin_port = htons(3337);
-  if (bind(fd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) == -1) {
-      perror("bind");
-      exit(2);
+static int
+open_tcp(const struct options *const o, int mode)
+{
+  char *hostname;
+  const char *port;
+  const char *port_iterator;
+  const char *spec;
+  int fd = -1;
+  int newfd = -1;
+  struct sockaddr *use_this_serv_addr = NULL;
+  socklen_t use_this_serv_addr_len = -1;
+
+  if (mode == O_WRONLY) {
+    spec = o->o;
+  } else {
+    spec = o->i;
   }
-#endif
 
-  port = strchr(spec, ':');
+  port = NULL;
+  for (port_iterator = strchr(spec, ':');
+       port_iterator && *port_iterator;
+       port_iterator = strchr(port_iterator, ':')) {
+    port = port_iterator;
+    port_iterator++;
+  }
   port++;
   if (port == NULL) {
     fprintf(stderr, "Can't find port in IP Spec '%s'\n", spec);
     exit(1);
   }
-  if (spec[0] == ':') { /* Listen */
-    /* FIXME, pull in front, so that same code is useable for client */
-    bzero(&serv_addr, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(atoi(port));
-    if (bind(fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) ==
-	-1) {
+  // this test is to allow connecting to (as a client) '::1:3333'
+  // aka ipv6 localhost
+  if (spec[1] != '\0' && spec[0] == ':' && spec[1] != ':') {
+     /* Listen mode */
+    if (o->six == -1) {
+      /* fixme, pull in front, so that same code is useable for client */
+      struct sockaddr_in serv_addr;
+      use_this_serv_addr = (struct sockaddr *)&serv_addr;
+      use_this_serv_addr_len = sizeof(serv_addr);
+      bzero(&serv_addr, sizeof(serv_addr));
+      serv_addr.sin_family = AF_INET;
+      serv_addr.sin_addr.s_addr = INADDR_ANY;
+      serv_addr.sin_port = htons(atoi(port));
+
+      fd = gimme_a_socket(AF_INET, SOCK_STREAM, 0);
+    } else { // allow or force ipv6
+      struct sockaddr_in6 sin6;
+      bzero(&sin6, sizeof(sin6));
+      use_this_serv_addr = (struct sockaddr *)&sin6;
+      use_this_serv_addr_len = sizeof(sin6);
+      // sin6.sin6_len = sizeof(sin6);
+      sin6.sin6_family = AF_INET6;
+      sin6.sin6_flowinfo = 0;
+      sin6.sin6_port = htons(atoi(port));
+      sin6.sin6_addr = in6addr_any;
+
+      fd = gimme_a_socket(AF_INET6, SOCK_STREAM, 0);
+    }
+    if (o->v > 1 && o->six != -1) 
+      fprintf(stderr, "Bind in IPV6 mode\n");
+    if (bind(fd, (struct sockaddr *)use_this_serv_addr, 
+             use_this_serv_addr_len) == -1) {
       perror("bind");
       exit(2);
     }
+
     if (listen(fd, 2) == -1) {
       perror("listen");
       exit(2);
@@ -464,19 +498,14 @@ open_tcp(const struct options *const o, int mode)
     if (o->v >= 1)
       fprintf(stderr, "Accepting on port %d\n", atoi(port));
 
-    bzero(&serv_addr, sizeof(serv_addr));
+    struct sockaddr addr_here;
+    socklen_t addr_here_size;
 
-    size = malloc(sizeof(*size)); /* Yes I know I can stack-allocate instead. */
-    if (size == NULL) {           /* However, a platform refuses accepting the */
-      perror("malloc");           /* size parameter to accept(2) when it is on the */
-      exit(2);                    /* stack and returns EFAULT. */
-    }
-    if ((newfd = accept(fd, (struct sockaddr *)(&serv_addr), size)) == -1) {
+    if ((newfd = accept(fd, &addr_here, &addr_here_size)) == -1) {
       fprintf(stderr, "errno: %d\n", errno);
       perror("accept");
       exit(2);
     }
-    free(size);
     close(fd);
     fd = newfd;
   } else { /* Connect */
@@ -487,48 +516,108 @@ open_tcp(const struct options *const o, int mode)
     if (o->v >= 2)
       fprintf(stderr, "Connecting to %s %s\n", hostname, port);
 
+    struct sockaddr_in serv_addr;
+    use_this_serv_addr = (struct sockaddr *)&serv_addr;
+    use_this_serv_addr_len = sizeof(serv_addr);
     bzero(&serv_addr, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_port = htons(atoi(port));
     serv_addr.sin_addr.s_addr = inet_addr(hostname);
-    if (serv_addr.sin_addr.s_addr == INADDR_NONE) {
+    if (serv_addr.sin_addr.s_addr != INADDR_NONE) {
+      // ipv4 address specified
+      fd = gimme_a_socket(AF_INET, SOCK_STREAM, 0);
+    } else {
 #ifdef NORESOLV
       fprintf(stderr, "Not an IP Address and no resolver compiled in: %s\n"
 	      ,hostname);
       exit(1);
 #else
-      struct in_addr **a;
       if (o->v >= 2)
-	fprintf(stderr, "Hostname lookup for '%s'\n", hostname);
-      hostent = gethostbyname(hostname);
-      if (hostent == NULL) {
-	herror(hostname);
-	exit(2);
+	fprintf(stderr, "Hostname lookup for '%s' use getaddrlen? %d\n", 
+                hostname, use_getaddrlen);
+      if (use_getaddrlen == 0) {
+        struct in_addr **a;
+        struct hostent *hostent;
+        hostent = gethostbyname(hostname);
+        if (hostent == NULL) {
+          herror(hostname);
+          exit(2);
+        }
+        a = (struct in_addr **)hostent->h_addr_list;
+        bcopy(*a, &serv_addr.sin_addr.s_addr, sizeof(struct in_addr));
+        if (o->v >= 2) {
+          fprintf(stderr, "Cannonical name %s, type %s, prim addr: "
+                  , hostent->h_name
+                  , hostent->h_addrtype == AF_INET ? "ipv4" : "!ipv4");
+          print_inet(stderr, &serv_addr.sin_addr.s_addr);
+          fprintf(stderr, "\n");
+        }
+        fd = gimme_a_socket(AF_INET, SOCK_STREAM, 0);
       }
-      a = (struct in_addr **)hostent->h_addr_list;
-      bcopy(*a, &serv_addr.sin_addr.s_addr, sizeof(struct in_addr));
-      if (o->v >= 2) {
-	fprintf(stderr, "Cannonical name %s, type %s, prim addr: "
-		, hostent->h_name
-		, hostent->h_addrtype == AF_INET? "ipv4": "!ipv4");
-	print_inet(stderr, &serv_addr.sin_addr.s_addr);
-	fprintf(stderr, "\n");
-#if 0
-	for (; *a; a++) {
-	  print_inet(stderr, *a);
-	  fprintf(stderr, "\n");
-	}
-#endif
+#ifdef HAVE_GETADDRINFO
+      struct addrinfo *result_begin, *result, hints;
+      int error;
+
+      bzero(&hints, sizeof(hints));
+      switch (o->six) {
+      case -1: hints.ai_family = AF_INET; break;
+      case 2: hints.ai_family = AF_INET6; break;
+      default: // usually 1
+        hints.ai_family = PF_UNSPEC; break;
       }
-#endif
-    }
-    if (connect(fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) ==
-	-1) {
+      hints.ai_socktype = SOCK_STREAM;
+
+      error = getaddrinfo(hostname, port, &hints, &result_begin);
+      if (error) {
+        fprintf(stderr, "getaddrinfo: '%s'\n", gai_strerror(error));
+        exit(3);
+      }
+      for (result = result_begin; result; result = result->ai_next) {
+        if (result->ai_addr)
+          break;
+      }
+      if (result == NULL) {
+        fprintf(stderr, "empty getaddrinfo() result for '%s'\n", hostname);
+        exit(3);
+      }
+      use_this_serv_addr = result->ai_addr;
+      use_this_serv_addr_len = result->ai_addrlen;
+
+      if (o->v > 1) {
+        char *msg;
+        switch (result->ai_family) {
+        case AF_INET: msg = "ipv4"; break;
+        case AF_INET6: msg = "ipv6"; break;
+        default: msg = "not-IPv4/6"; break;
+        }
+        char name[8192];
+        char addr_string[INET6_ADDRSTRLEN];
+        // .... // FIXME - use inet_ntop
+        getnameinfo(use_this_serv_addr, use_this_serv_addr_len,
+                    name, sizeof(name), NULL, 0, 0);
+        if (inet_ntop(result->ai_family, &use_this_serv_addr, addr_string, 
+                      use_this_serv_addr_len) == NULL) {
+          strcpy(addr_string, "unknown");
+        }
+        fprintf(stderr, "Cannonical name '%s', type %s, prim addr: '%s'\n"
+                , name
+                , msg
+                , addr_string);
+      }
+
+      fd = gimme_a_socket(result->ai_family, result->ai_socktype, 
+                          result->ai_protocol);
+
+#endif // HAVE_GETADDRINFO
+    }             
+    if (connect(fd, use_this_serv_addr, use_this_serv_addr_len) == -1) {
       perror("connect");
       exit(2);
     }
     free(hostname);
-  }
+    // FIXME - free getaddrinfo result
+#endif // host name lookup
+}
 
 #if defined(HAVE_GETNAMEINFO) && !defined(NORESOLV)
   if (o->v >= 2) {
@@ -584,7 +673,7 @@ get_fs_blocksize(const char *const filename, int flags, int mode)
       return statfs.f_bsize;
 }
 
-// FIXME, make this usable as open_input_file, too
+// fixme, make this usable as open_input_file, too
 void open_output_file(const struct options *const o
 		      , struct progstate *const state, int flags)
 {
@@ -613,7 +702,7 @@ void open_output_file(const struct options *const o
     if (!o->user_specified_blocksize) {
 #ifdef HAVE_SYS_STATVFS_H
 #if 0
-      // code that broke -B FIXME
+      // code that broke -B fixme
       tmp_blocksize = get_fs_blocksize(o->o, flags, mode);
       if (state->b && state->b != tmp_blocksize) {
 	fprintf(stderr, "WARNING: blocksize set to %d, but output filesystem \n"
@@ -692,7 +781,7 @@ init(struct options *const o, struct progstate *const state
 
   if (strchr(o->I, 'D'))
     state->using_o_direct_i = 1;
-  // FIXME
+  // fixme
   // need code to check that blocksize specified
   // works for both in and out
 
@@ -730,7 +819,8 @@ init(struct options *const o, struct progstate *const state
 	state->ifd = open(o->i, O_RDONLY);
     }
     if (state->ifd == -1) {
-      perror("Cannot open input file");
+      fprintf(stderr, "Cannot open input file/tcpspec '%s': ", o->i);
+      perror(NULL);
       exit(2);
     }
   }
@@ -1561,6 +1651,9 @@ usage(void)
 	  "SIGUSR1 causes statistics to be written to stderr\n"
 	  "SIGUSR2 causes loop end after next buffer transfer\n"
 	  "<file>  if -i has not been used, specifies input file\n"
+          "-6 <n>  Use IPV6: -1 = don't, 1 = allow both, 2 = force v6\n"
+          "        On some platforms server mode 1 forces ipv6, as\n"
+          "        they don't open both v4 and v6 ports from one bind call.\n"
 	  );
   exit(1);
 }
@@ -1593,7 +1686,7 @@ main(int argc, char *const argv[])
 
   default_options(&o);
 
-  while ((ch = getopt(argc, argv, "b:B:c:i:I:n:o:O:p:St:T:v:Vl")) != -1) {
+  while ((ch = getopt(argc, argv, "b:B:c:i:I:n:o:O:p:St:T:v:Vl6:")) != -1) {
     switch(ch) {
     case 'v': o.v = atoi(optarg); break;
     case 'b': blocksize = atoi_kmg(optarg); break;
@@ -1615,6 +1708,13 @@ main(int argc, char *const argv[])
       fprintf(stderr, "Warning: timer support not compiled in\n");
 #endif
       o.T = atoi(optarg);
+      break;
+    case '6':
+      if (!atoi(optarg) != 0) {
+        fprintf(stderr, "-6 arg must be a number, -1, 1 or 2: '%s'\n", optarg);
+        exit(1);
+      }
+      o.six = atoi(optarg);
       break;
     default: usage();
     }
