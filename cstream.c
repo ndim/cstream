@@ -815,8 +815,22 @@ init(struct options *const o, struct progstate *const state
     else {
       if (strchr(o->i, ':') && !strchr(o->I, 'N'))
 	state->ifd = open_tcp(o, O_RDONLY);
-      else
-	state->ifd = open(o->i, O_RDONLY);
+      else {
+	int flags = O_RDONLY;
+	if (strchr(o->I, 'D')) {
+#ifdef HAVE_O_DIRECT
+	  flags |= O_DIRECT;
+	  if (o->v > 1) {
+	    fprintf(stderr, "Using O_DIRECT on input file with blocksize %d\n"
+		    , state->b);
+	  }
+#else
+	  fprintf(stderr, "O_DIRECT requested for input but not compiled in\n");
+	  exit(1);
+#endif
+	}
+	state->ifd = open(o->i, flags);
+      }
     }
     if (state->ifd == -1) {
       fprintf(stderr, "Cannot open input file/tcpspec '%s': ", o->i);

@@ -1,3 +1,8 @@
+3.1.0:
+------
+
+O_DIRECT supported for input.
+
 3.0.0:
 ------
 
@@ -12,7 +17,7 @@ too.  They shouldn't break anything but non-IPV6 things were touched.
 
 
 Aftermath for 2.7.4 - 2.7.6:
---------------------
+----------------------------
 
 ATTENTION:
 I'm afraid that support for the '-B <size_of_buffer>' was clobbered in
@@ -21,7 +26,7 @@ multiple reads before the writer could write or vice versa.
 
 Change reverted in 2.7.6.
 
-2.7.4 and 2.75 do not have working -B.
+2.7.4 and 2.7.5 do not have working -B.
 
 2.8.0:
 ------
