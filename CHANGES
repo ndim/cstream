@@ -1,3 +1,10 @@
+3.1.1:
+-----
+
+-n <nbytes_to_stream> was not clear to use numbers > 2 GB.  I didn't
+notice since it worked fine if you used suffixes "K/M/G" as long as
+the number was < 2 G.  Sorry about that.
+
 3.1.0:
 ------
 

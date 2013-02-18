@@ -1678,7 +1678,7 @@ atoi_kmg(const char *const s)
   long long res;
   char c;
 
-  res = atoi(s);
+  res = atoll(s);
   if (s[0] != '\0') {
     c = tolower(s[strlen(s)-1]);
     switch (c) {
