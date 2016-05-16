@@ -1366,7 +1366,7 @@ loop(struct options *const o, struct progstate *const state)
 	  exit(1);
 	}
 
-	state->b = state->b = frames * 2 * 2; /* 16 bit Stereo */
+	state->b = frames * 2 * 2; /* 16 bit Stereo */
 	for (i = 0; i < frames; i++) {
 	  val = sin((double)i * 2.0 * pi / (double)frames) * 32767.0;
 	  buf[i * 4] = buf[i * 4 + 2] = val % 256;
