@@ -35,6 +35,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -792,7 +793,7 @@ init(struct options *const o, struct progstate *const state
   if (o->w == 0)
     o->w = state->b;
 
-  if (state->b < state->b) {
+  if (false /* state->b < state->b FIXME logic is broken */) {
     fprintf(stderr, "-B must not be lower than -b or -n (%d/%d)\n"
 	    , state->b, state->b);
     exit(1);
@@ -1025,7 +1026,7 @@ report(const struct options *const o,
   print_kmg(" ", "%.2f", rate, "B/s", stderr);
   if (o->l)
       fprintf(stderr, " %g lines", (double)state->n_lines);
-  if (curbytes != -1 && state->b != state->b)
+  if (curbytes != -1 && false /* state->b != state->b FIXME broken logic */)
     fprintf(stderr, " %.1f %%buf", (double)curbytes / (double)state->b * 100.0);
   fprintf(stderr, "\n");
 
@@ -1634,8 +1635,8 @@ usage(void)
 	  "         3 = also seperate throughput for read and write "
 	  "(unimplemented)\n"
 	  "         3 = verbose stats on every read/write\n"
-	  "-b <n> = blocksize [default: 8192]\n"
-	  "-B <n> = buffer (at most) <n> bytes [default: one block]\n"
+	  "-b <n> = blocksize [default: 8192] (BROKEN!)\n"
+	  "-B <n> = buffer (at most) <n> bytes [default: one block] (BROKEN!)\n"
 	  "-c <n> = Concurrency, writing done by a seperate process\n"
 	  "         0 = no concurrency, one one process\n"
 	  "         1 = read side buffers\n"

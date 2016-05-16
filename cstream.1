@@ -41,12 +41,16 @@ Options:
 Set the block size used for read/write to
 .Ar num .
 The default is 8192 bytes.
+.br
+FIXME: The buffer size logic inside cstream is broken.
 .It Fl B Ar num
 Buffer input up to
 .Ar num
 bytes before writing. The default is the blocksize. It is an error to
 set this to anything below the blocksize. Useful when writing tapes
 and simlilar that prefer few large writes of many small.
+.br
+FIXME: The buffer size logic inside cstream is broken.
 .It Fl c Ar num
 Concurrent operation. Use a seperate process for outout. This is
 especially useful in combination with the -B option.
