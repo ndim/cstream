@@ -278,7 +278,10 @@ sigreport(int signal)
 static void
 sighup(int signal)
 {
-  int meh = write(2, "SIGHUP\n", sizeof("SIGHUP\n") - 1);
+  ssize_t meh = write(2, "SIGHUP\n", sizeof("SIGHUP\n") - 1);
+  if (meh != sizeof("SIGHUP\n")) {
+    /* ignore write error */
+  }
   n_sighups++;
 }
 
