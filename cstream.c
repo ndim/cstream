@@ -96,6 +96,7 @@
 #else
 #ifdef HAVE_SYS_SOUNDCARD_H
 #include <sys/soundcard.h>
+#include <sys/ioctl.h>
 #define WANT_SOUND 1
 #else
 #ifdef HAVE_LINUX_SOUNDCARD_H
@@ -628,7 +629,7 @@ open_tcp(const struct options *const o, int mode)
     } *it, funcs[3] = {
       {getsockname, "getsockname", "Local binding"},
       {getpeername, "getpeername", "Remote binding"},
-      {NULL}
+      {NULL, NULL, NULL}
     };
     union {
       struct sockaddr sa;
